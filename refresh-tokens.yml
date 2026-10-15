@@ -1,0 +1,45 @@
+name: Продление токенов
+
+# Токены Instagram и Threads живут 60 дней. Раз в неделю продлеваем их
+# и сохраняем новые значения в секреты репозитория.
+# Нужен секрет GH_PAT (см. README, шаг 6). Без него workflow просто напомнит.
+
+on:
+  schedule:
+    - cron: "30 6 * * 1"     # по понедельникам в 09:30 МСК
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Продлить токены
+        env:
+          IG_TOKEN: ${{ secrets.IG_TOKEN }}
+          THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          refresh () {
+            # $1 — имя секрета, $2 — url продления
+            NEW=$(curl -sf "$2" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])") || {
+              echo "::error::$1: продлить не удалось. Возможно, токен уже истёк — получите новый (README, шаг 4–5)."
+              return 1
+            }
+            echo "::add-mask::$NEW"
+            if [ -n "$GH_TOKEN" ]; then
+              gh secret set "$1" --repo "$REPO" --body "$NEW"
+              echo "$1: продлён и сохранён на 60 дней"
+            else
+              echo "::warning::$1 продлён, но не сохранён: нет секрета GH_PAT. Добавьте его (README, шаг 6)."
+            fi
+          }
+          FAILED=0
+          if [ -n "$IG_TOKEN" ]; then
+            refresh IG_TOKEN "https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=$IG_TOKEN" || FAILED=1
+          fi
+          if [ -n "$THREADS_TOKEN" ]; then
+            refresh THREADS_TOKEN "https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=$THREADS_TOKEN" || FAILED=1
+          fi
+          exit $FAILED
